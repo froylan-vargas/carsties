@@ -3,6 +3,8 @@ using AuctionService.DTOs;
 using AuctionService.Entities;
 using AutoMapper;
 using AutoMapper.QueryableExtensions;
+using Contracts;
+using MassTransit;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -14,11 +16,13 @@ namespace AuctionService.Controllers
     {
         private readonly AuctionDBContext _context;
         private readonly IMapper _mapper;
+        private readonly IPublishEndpoint _publishEndpoint;
 
-        public AuctionsController(AuctionDBContext context, IMapper mapper)
+        public AuctionsController(AuctionDBContext context, IMapper mapper, IPublishEndpoint publishEndpoint)
         {
             _context = context;
             _mapper = mapper;
+            _publishEndpoint = publishEndpoint;
         }
 
         [HttpGet]
@@ -54,8 +58,15 @@ namespace AuctionService.Controllers
             //TODO: add current user as seller
             auction.Seller = "Test";
             _context.Auctions.Add(auction);
+
+            var newAuction = _mapper.Map<AuctionDto>(auction);
+
+            await _publishEndpoint.Publish(_mapper.Map<AuctionCreated>(newAuction));
+
             var result = await _context.SaveChangesAsync() > 0;
-            if (!result) return BadRequest("Could not save changes to the DB");
+            
+            if (!result) return BadRequest("Could not save changes to the DB");            
+
             return CreatedAtAction(nameof(GetAuctionById),
                 new{auction.Id},
                 _mapper.Map<AuctionDto>(auction));
@@ -77,6 +88,10 @@ namespace AuctionService.Controllers
             auction.Item.Mileage = updateAuctionDto.Mileage ?? auction.Item.Mileage;
             auction.Item.Year = updateAuctionDto.Year ?? auction.Item.Year;
 
+            var updatedAuction = _mapper.Map<AuctionUpdated>(auction);
+
+            await _publishEndpoint.Publish(updatedAuction);
+
             var result = await _context.SaveChangesAsync() > 0;
             if (result) return Ok();
             return BadRequest("Problem saving changes");
@@ -91,6 +106,7 @@ namespace AuctionService.Controllers
             //TODO: check seller == username
 
             _context.Auctions.Remove(auction);
+            await _publishEndpoint.Publish<AuctionDeleted>(new AuctionDeleted{Id=auction.Id.ToString()});
 
             var result = await _context.SaveChangesAsync() > 0;
             if (!result) return BadRequest("Could not update DB");
